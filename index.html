@@ -320,7 +320,7 @@
 
     <section class="card" id="sec-sync">
       <h2><span class="num">·</span>Synchronizacja z Google Drive</h2>
-      <p class="hint">Jednorazowa konfiguracja: wklej swój Client ID z Google Cloud Console (instrukcja poniżej), potem połącz konto. Ten sam plik na Dysku będzie widoczny z każdego urządzenia po zalogowaniu tym samym kontem Google.</p>
+      <p class="hint">Client ID jest już wpisany domyślnie — nie musisz go wklejać na nowych urządzeniach. Kliknij tylko „Połącz z Google Drive” (raz na każde urządzenie/przeglądarkę i logowanie Google poprosi o zgodę).</p>
       <label>Google OAuth Client ID</label>
       <input type="text" id="gClientId" placeholder="np. 123456789-abc...apps.googleusercontent.com">
       <div class="btn-row" style="max-width:320px;">
@@ -739,6 +739,10 @@ if ("serviceWorker" in navigator){
 const DRIVE_FILE_NAME = "inop-dane.json";
 const CLIENT_ID_KEY = "inop-google-client-id";
 const DRIVE_FILEID_KEY = "inop-drive-fileid";
+// Client ID is public by design (not a secret) for browser-based OAuth apps,
+// so it's safe to bake in here — it means every device that opens this app
+// gets it pre-filled automatically, with no manual copy-pasting required.
+const DEFAULT_CLIENT_ID = "160664823840-csup1p9f37iotvjofsf0453tem95bvqp.apps.googleusercontent.com";
 let gTokenClient = null;
 let gAccessToken = null;
 let gDriveFileId = null;
@@ -754,8 +758,10 @@ function setGStatus(text){ gStatusEl.textContent = "Status: " + text; }
 (function initDriveUI(){
   try{
     const savedId = localStorage.getItem(CLIENT_ID_KEY);
-    if (savedId) gClientIdInput.value = savedId;
-  }catch(e){}
+    gClientIdInput.value = savedId || DEFAULT_CLIENT_ID;
+  }catch(e){
+    gClientIdInput.value = DEFAULT_CLIENT_ID;
+  }
   try{
     const savedFileId = localStorage.getItem(DRIVE_FILEID_KEY);
     if (savedFileId) gDriveFileId = savedFileId;
