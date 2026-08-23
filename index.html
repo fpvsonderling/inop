@@ -318,31 +318,17 @@
     </section>
 
     <section class="card" id="sec-sync">
-      <h2><span class="num">·</span>Synchronizacja (Firebase)</h2>
-      <p class="hint">Jednorazowo wklej konfigurację Firebase (z konsoli Firebase → Project settings → Your apps) i zapisz. Potem zaloguj się raz — sesja zostanie zapamiętana na tym urządzeniu. Od tego momentu każda zmiana w dokumencie zapisuje się w chmurze automatycznie, a przy otwarciu appki na innym zalogowanym urządzeniu najnowsza wersja wczytuje się sama.</p>
+      <h2><span class="num">·</span>Synchronizacja</h2>
+      <p class="hint">Zaloguj się swoim kontem Google — sesja zostanie zapamiętana na tym urządzeniu/przeglądarce, więc kolejne otwarcia appki nie będą wymagały ponownego logowania. Każda zmiana w dokumencie zapisuje się w chmurze automatycznie.</p>
 
-      <div id="fbConfigBox">
-        <label>Konfiguracja Firebase (wklej cały fragment kodu z Firebase — z import, komentarzami itd. — albo sam obiekt)</label>
-        <textarea id="fbConfigInput" rows="7" placeholder='{"apiKey": "...", "authDomain": "...", "projectId": "...", ...}'></textarea>
-        <button class="btn" id="fbSaveConfigBtn" style="max-width:260px;">Zapisz konfigurację</button>
-      </div>
-
-      <div id="fbAuthBox" style="margin-top:18px;">
-        <button class="btn" id="fbGoogleBtn" style="max-width:320px; display:flex; align-items:center; justify-content:center; gap:8px;">
+      <div id="fbAuthBox" style="margin-top:10px;">
+        <button class="btn primary" id="fbGoogleBtn" style="max-width:320px; display:flex; align-items:center; justify-content:center; gap:8px;">
           Zaloguj przez Google
         </button>
-        <p class="hint" style="margin:10px 0;">— lub e-mailem i hasłem —</p>
-        <div class="grid2">
-          <div><label>E-mail</label><input type="text" id="fbEmail" autocomplete="username"></div>
-          <div><label>Hasło</label><input type="text" id="fbPassword" autocomplete="current-password" style="-webkit-text-security:disc;"></div>
-        </div>
-        <div class="btn-row" style="max-width:320px;">
-          <button class="btn primary" id="fbLoginBtn">Zaloguj</button>
-          <button class="btn" id="fbLogoutBtn" style="display:none;">Wyloguj</button>
-        </div>
+        <button class="btn" id="fbLogoutBtn" style="display:none; max-width:320px; margin-top:8px;">Wyloguj</button>
       </div>
 
-      <p class="hint" id="fbStatus" style="margin-top:14px;">Status: brak konfiguracji.</p>
+      <p class="hint" id="fbStatus" style="margin-top:14px;">Status: łączenie z Firebase…</p>
     </section>
 
     <section class="card" id="sec-access" style="display:none;">
@@ -761,15 +747,8 @@ if ("serviceWorker" in navigator){
 }
 
 /* ---------------- Firebase sync (multi-user, roles) ---------------- */
-const FB_CONFIG_KEY = "inop-firebase-config";
 
-const fbConfigInput = document.getElementById("fbConfigInput");
-const fbSaveConfigBtn = document.getElementById("fbSaveConfigBtn");
-const fbConfigBox = document.getElementById("fbConfigBox");
 const fbAuthBox = document.getElementById("fbAuthBox");
-const fbEmail = document.getElementById("fbEmail");
-const fbPassword = document.getElementById("fbPassword");
-const fbLoginBtn = document.getElementById("fbLoginBtn");
 const fbGoogleBtn = document.getElementById("fbGoogleBtn");
 const fbLogoutBtn = document.getElementById("fbLogoutBtn");
 const fbStatusEl = document.getElementById("fbStatus");
@@ -796,6 +775,19 @@ let availableDocs = [];    // [{id, label, role}]
 function setFbStatus(text){ fbStatusEl.textContent = "Status: " + text; }
 const ROLE_LABELS = { owner:"właściciel", administrator:"administrator", editor:"edytor", viewer:"czytelnik" };
 
+// Firebase config values are not secret by design (protected by Firestore
+// security rules + the authorized-domains list, not by hiding them), so
+// baking this in means every browser/device works immediately with no
+// copy-pasting.
+const DEFAULT_FB_CONFIG = {
+  apiKey: "AIzaSyBGmXA7cV8ILO7UQ1mt9w7nXEf6JDd9ozE",
+  authDomain: "inop-app-5c894.firebaseapp.com",
+  projectId: "inop-app-5c894",
+  storageBucket: "inop-app-5c894.firebasestorage.app",
+  messagingSenderId: "850223752582",
+  appId: "1:850223752582:web:ab251d5bcfb5f47235f807",
+};
+
 function initFirebase(config){
   try{
     fbApp = firebase.initializeApp(config);
@@ -818,10 +810,9 @@ function initFirebase(config){
         fbLogoutBtn.style.display = "none";
         accessSection.style.display = "none";
         currentDocId = null; currentRole = null;
-        setFbStatus("wprowadź e-mail i hasło (lub zaloguj przez Google), aby się zalogować.");
+        setFbStatus("kliknij „Zaloguj przez Google”, aby zacząć.");
       }
     });
-    fbConfigBox.style.display = "none";
     // Pick up the result if we just came back from a Google redirect login.
     fbAuth.getRedirectResult().catch((e) => {
       setFbStatus("błąd logowania Google — " + e.message);
@@ -833,76 +824,10 @@ function initFirebase(config){
   }
 }
 
-(function initFbUI(){
-  try{
-    const savedConfig = localStorage.getItem(FB_CONFIG_KEY);
-    if (savedConfig){
-      fbConfigInput.value = savedConfig;
-      const parsed = JSON.parse(savedConfig);
-      initFirebase(parsed);
-    } else {
-      setFbStatus("wklej konfigurację Firebase powyżej i zapisz.");
-    }
-  }catch(e){
-    setFbStatus("nie udało się wczytać zapisanej konfiguracji.");
-  }
-})();
-
-function extractFirebaseConfig(rawText){
-  const text = rawText.trim();
-  // Prefer the object that follows "firebaseConfig" specifically, so we
-  // don't accidentally grab braces from an "import { ... }" line above it.
-  let searchFrom = 0;
-  const marker = text.indexOf("firebaseConfig");
-  if (marker !== -1) searchFrom = marker;
-  const start = text.indexOf("{", searchFrom);
-  if (start === -1) throw new Error("Nie znaleziono nawiasu otwierającego { w wklejonym tekście.");
-  let depth = 0, inString = false, quoteChar = "", end = -1;
-  for (let i = start; i < text.length; i++){
-    const ch = text[i];
-    if (inString){
-      if (ch === "\\") { i++; continue; }
-      if (ch === quoteChar) inString = false;
-      continue;
-    }
-    if (ch === '"' || ch === "'" || ch === "`"){ inString = true; quoteChar = ch; continue; }
-    if (ch === "{") depth++;
-    else if (ch === "}"){
-      depth--;
-      if (depth === 0){ end = i; break; }
-    }
-  }
-  if (end === -1) throw new Error("Nie znaleziono pasującego nawiasu zamykającego } .");
-  const objectText = text.slice(start, end + 1);
-  try{
-    return JSON.parse(objectText);
-  }catch(e){
-    try{
-      return new Function('"use strict"; return (' + objectText + ");")();
-    }catch(e2){
-      throw new Error("Nie udało się odczytać obiektu konfiguracji.");
-    }
-  }
-}
-
-fbSaveConfigBtn.addEventListener("click", ()=>{
-  let parsed;
-  try{
-    parsed = extractFirebaseConfig(fbConfigInput.value);
-    if (!parsed || !parsed.apiKey || !parsed.projectId){
-      throw new Error("Brakuje pól apiKey / projectId — sprawdź, czy skopiowano cały obiekt firebaseConfig.");
-    }
-  }catch(e){
-    alert("Nie udało się odczytać konfiguracji: " + e.message + "\n\nMożesz wkleić cały fragment kodu z Firebase (z import, komentarzami) albo sam obiekt {...} — appka sama go wyłuska.");
-    return;
-  }
-  try{ localStorage.setItem(FB_CONFIG_KEY, JSON.stringify(parsed)); }catch(e){}
-  const ok = initFirebase(parsed);
-  if (ok) setFbStatus("konfiguracja zapisana. Zaloguj się poniżej.");
-});
+initFirebase(DEFAULT_FB_CONFIG);
 
 fbGoogleBtn.addEventListener("click", async ()=>{
-  if (!fbAuth){ alert("Najpierw zapisz konfigurację Firebase."); return; }
+  if (!fbAuth){ alert("Firebase nie jest jeszcze gotowy — odśwież stronę i spróbuj ponownie."); return; }
   const provider = new firebase.auth.GoogleAuthProvider();
   setFbStatus("logowanie przez Google…");
   try{
@@ -919,20 +844,6 @@ fbGoogleBtn.addEventListener("click", async ()=>{
     } else {
       setFbStatus("błąd logowania Google — " + e.message);
     }
-  }
-});
-
-fbLoginBtn.addEventListener("click", async ()=>{
-  if (!fbAuth){ alert("Najpierw zapisz konfigurację Firebase."); return; }
-  const email = fbEmail.value.trim();
-  const pass = fbPassword.value;
-  if (!email || !pass){ alert("Podaj e-mail i hasło."); return; }
-  setFbStatus("logowanie…");
-  try{
-    await fbAuth.signInWithEmailAndPassword(email, pass);
-    fbPassword.value = "";
-  }catch(e){
-    setFbStatus("błąd logowania — " + e.message);
   }
 });
 
