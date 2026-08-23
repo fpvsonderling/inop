@@ -308,8 +308,9 @@
 
     <section class="card" id="sec-personel">
       <h2><span class="num">·</span>Załącznik — wykaz personelu i uprawnień</h2>
+      <p class="hint">Kolumna „Uprawnienia" mieści wiele wpisów — jeden na linię, np. „A2 — ważne do 15.05.2027", „STS-01 — ważne do 01.06.2028".</p>
       <table class="editor-table" id="tbl-crew">
-        <thead><tr><th style="width:22%">Imię i nazwisko</th><th style="width:18%">Funkcja</th><th style="width:20%">Nr świadectwa</th><th style="width:22%">Scenariusz</th><th style="width:12%">Ważność do</th><th></th></tr></thead>
+        <thead><tr><th style="width:22%">Imię i nazwisko</th><th style="width:20%">Funkcja</th><th style="width:16%">Nr świadectwa</th><th>Uprawnienia i ważność (jedno na linię)</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
       <button class="add-row" data-add="crew">+ dodaj osobę</button>
@@ -491,8 +492,8 @@ Archiwizacja zgód/zgłoszeń operacji (KSID, zgody terenu, zgody portowe/morski
 `Każdy członek załogi przed operacją potwierdza dobry stan zdrowia, brak zmęczenia oraz brak przeciwwskazań do wykonywania obowiązków.`
   },
   crew:[
-    {name:"", role:"Zdalny pilot / operator", license:"", scenario:"", validUntil:""},
-    {name:"", role:"Obserwator", license:"", scenario:"", validUntil:""},
+    {name:"", role:"Zdalny pilot / operator", license:"", permissions:"np. A1/A3 — ważne do ...\nnp. STS-01 — ważne do ..."},
+    {name:"", role:"Obserwator", license:"", permissions:""},
   ],
   attachmentsList:
 `Wzory list kontrolnych (pre-flight / post-flight)
@@ -546,7 +547,7 @@ const tableConfigs = {
   changes:{ cols:["no","date","desc","approved"], types:["text","text","text","text"] },
   abbrevs:{ cols:["abbr","meaning"], types:["text","text"] },
   fleet:{ cols:["name","cls","serial","opType","status"], types:["text","text","text","text","text"] },
-  crew:{ cols:["name","role","license","scenario","validUntil"], types:["text","text","text","text","text"] },
+  crew:{ cols:["name","role","license","permissions"], types:["text","text","text","textarea"] },
 };
 const tableIds = { changes:"tbl-changes", abbrevs:"tbl-abbrevs", fleet:"tbl-fleet", crew:"tbl-crew" };
 
@@ -556,10 +557,12 @@ function renderTable(key){
   tbody.innerHTML = "";
   state[key].forEach((row, idx)=>{
     const tr = document.createElement("tr");
-    cfg.cols.forEach(col=>{
+    cfg.cols.forEach((col, colIdx)=>{
       const td = document.createElement("td");
-      const inp = document.createElement("input");
-      inp.type = "text";
+      const isTextarea = cfg.types && cfg.types[colIdx] === "textarea";
+      const inp = document.createElement(isTextarea ? "textarea" : "input");
+      if (!isTextarea) inp.type = "text";
+      else { inp.rows = 3; inp.style.cssText = "width:100%; font-family:var(--font-b); font-size:13.5px; padding:7px 9px; border:1px solid var(--line-strong); border-radius:6px; resize:vertical;"; }
       inp.value = row[col] || "";
       inp.disabled = isReadOnly;
       inp.addEventListener("input", ()=>{
@@ -665,6 +668,16 @@ function tableHTML(headers, rows){
   return html;
 }
 
+function crewTableHTML(rows){
+  let html = "<table><tr><th>Imię i nazwisko</th><th>Funkcja</th><th>Nr świadectwa</th><th>Uprawnienia i ważność</th></tr>";
+  rows.forEach(r=>{
+    const permHtml = esc(r.permissions || "").split("\n").map(l=>l.trim()).filter(Boolean).join("<br>");
+    html += "<tr><td>" + esc(r.name) + "</td><td>" + esc(r.role) + "</td><td>" + esc(r.license) + "</td><td>" + permHtml + "</td></tr>";
+  });
+  html += "</table>";
+  return html;
+}
+
 function buildPrintArea(){
   const s = state;
   let html = "";
@@ -731,7 +744,7 @@ function buildPrintArea(){
   </section>`;
 
   html += `<section><h2>Załącznik — wykaz personelu i uprawnień</h2>
-    ${tableHTML(["Imię i nazwisko","Funkcja","Nr świadectwa","Scenariusz","Ważność do"], s.crew.map(r=>[r.name,r.role,r.license,r.scenario,r.validUntil]))}
+    ${crewTableHTML(s.crew)}
   </section>`;
 
   html += `<section><h2>Załącznik — lista pozostałych dokumentów</h2>${bulletsHTML(s.attachmentsList)}</section>`;
