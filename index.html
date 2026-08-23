@@ -180,6 +180,10 @@
       <a href="#sec-access">Dostęp do dokumentu</a>
     </nav>
     <div class="sidebar-foot">
+      <div id="sidebarUserRow" style="display:none; align-items:center; justify-content:space-between; margin-bottom:10px; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.12);">
+        <span id="sidebarUserEmail" style="font-size:11.5px; color:#93A29B; font-family:var(--font-m); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:150px;"></span>
+        <button id="sidebarLogoutBtn" style="background:none; border:none; color:var(--amber); font-size:11.5px; font-family:var(--font-m); cursor:pointer; padding:2px 0; text-decoration:underline;">Wyloguj</button>
+      </div>
       <div class="save-state"><span class="dot" id="saveDot"></span><span id="saveLabel">Zapisano</span></div>
       <div class="btn-row">
         <button class="btn primary" id="exportBtn">Eksportuj do PDF</button>
@@ -752,6 +756,9 @@ const fbAuthBox = document.getElementById("fbAuthBox");
 const fbGoogleBtn = document.getElementById("fbGoogleBtn");
 const fbLogoutBtn = document.getElementById("fbLogoutBtn");
 const fbStatusEl = document.getElementById("fbStatus");
+const sidebarUserRow = document.getElementById("sidebarUserRow");
+const sidebarUserEmail = document.getElementById("sidebarUserEmail");
+const sidebarLogoutBtn = document.getElementById("sidebarLogoutBtn");
 
 const accessSection = document.getElementById("sec-access");
 const docSwitcher = document.getElementById("docSwitcher");
@@ -803,12 +810,15 @@ function initFirebase(config){
         fbAuthBox.style.display = "none";
         fbLogoutBtn.style.display = "block";
         accessSection.style.display = "block";
+        sidebarUserRow.style.display = "flex";
+        sidebarUserEmail.textContent = user.email || "";
         setFbStatus("zalogowano jako " + user.email + ". Przygotowywanie dostępu…");
         if (justLoggedIn) onLoggedIn();
       } else {
         fbAuthBox.style.display = "block";
         fbLogoutBtn.style.display = "none";
         accessSection.style.display = "none";
+        sidebarUserRow.style.display = "none";
         currentDocId = null; currentRole = null;
         setFbStatus("kliknij „Zaloguj przez Google”, aby zacząć.");
       }
@@ -849,6 +859,13 @@ fbGoogleBtn.addEventListener("click", async ()=>{
 
 fbLogoutBtn.addEventListener("click", async ()=>{
   if (!fbAuth) return;
+  await fbAuth.signOut();
+  setFbStatus("wylogowano.");
+});
+
+sidebarLogoutBtn.addEventListener("click", async ()=>{
+  if (!fbAuth) return;
+  if (!confirm("Wylogować się?")) return;
   await fbAuth.signOut();
   setFbStatus("wylogowano.");
 });
