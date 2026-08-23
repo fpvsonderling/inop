@@ -177,6 +177,7 @@
       <a href="#sec-personel">Załącznik — personel</a>
       <a href="#sec-zalaczniki">Załącznik — lista dok.</a>
       <a href="#sec-sync">Logowanie / synchronizacja</a>
+      <a href="#sec-access">Dostęp do dokumentu</a>
     </nav>
     <div class="sidebar-foot">
       <div class="save-state"><span class="dot" id="saveDot"></span><span id="saveLabel">Zapisano</span></div>
@@ -343,6 +344,41 @@
 
       <p class="hint" id="fbStatus" style="margin-top:14px;">Status: brak konfiguracji.</p>
     </section>
+
+    <section class="card" id="sec-access" style="display:none;">
+      <h2><span class="num">·</span>Dostęp do dokumentu</h2>
+
+      <label>Aktualny dokument</label>
+      <select id="docSwitcher" style="width:100%; font-family:var(--font-b); font-size:14px; padding:9px 11px; border:1px solid var(--line-strong); border-radius:7px; background:#FCFCFB; margin-bottom:14px;"></select>
+      <p class="hint" id="roleInfo"></p>
+
+      <div id="accessManageBox" style="display:none; margin-top:16px;">
+        <h3 class="sub">Osoby z dostępem</h3>
+        <table class="editor-table" id="tbl-collaborators">
+          <thead><tr><th style="width:45%">E-mail</th><th style="width:30%">Rola</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+
+        <h3 class="sub">Dodaj osobę</h3>
+        <div class="grid2">
+          <div><label>E-mail</label><input type="text" id="inviteEmail" placeholder="osoba@przyklad.pl"></div>
+          <div>
+            <label>Rola</label>
+            <select id="inviteRole" style="width:100%; font-family:var(--font-b); font-size:14px; padding:9px 11px; border:1px solid var(--line-strong); border-radius:7px; background:#FCFCFB; margin-bottom:16px;">
+              <option value="viewer">Czytelnik</option>
+              <option value="editor">Edytor</option>
+              <option value="administrator">Administrator</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn primary" id="inviteBtn" style="max-width:220px;">Dodaj osobę</button>
+
+        <div id="pendingBox" style="margin-top:16px; display:none;">
+          <h3 class="sub">Oczekujące zaproszenia</h3>
+          <div id="pendingList" style="font-size:13.5px; color:var(--ink-soft);"></div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -479,6 +515,7 @@ Procedury specyficzne dla operacji offshore`
 
 let state = JSON.parse(JSON.stringify(defaults));
 let saveTimer = null;
+let isReadOnly = false;
 
 function deepMerge(base, extra){
   if (Array.isArray(base)) return Array.isArray(extra) ? extra : base;
@@ -506,7 +543,9 @@ function bindInputs(){
   document.querySelectorAll("[data-bind]").forEach(el=>{
     const path = el.getAttribute("data-bind");
     el.value = getPath(state, path) || "";
+    el.disabled = isReadOnly;
     el.addEventListener("input", ()=>{
+      if (isReadOnly) return;
       setPath(state, path, el.value);
       queueSave();
     });
@@ -532,7 +571,9 @@ function renderTable(key){
       const inp = document.createElement("input");
       inp.type = "text";
       inp.value = row[col] || "";
+      inp.disabled = isReadOnly;
       inp.addEventListener("input", ()=>{
+        if (isReadOnly) return;
         state[key][idx][col] = inp.value;
         queueSave();
       });
@@ -540,14 +581,16 @@ function renderTable(key){
       tr.appendChild(td);
     });
     const tdDel = document.createElement("td");
-    const del = document.createElement("button");
-    del.className = "row-del"; del.innerHTML = "&times;"; del.title = "Usuń wiersz";
-    del.addEventListener("click", ()=>{
-      state[key].splice(idx,1);
-      renderTable(key);
-      queueSave();
-    });
-    tdDel.appendChild(del);
+    if (!isReadOnly){
+      const del = document.createElement("button");
+      del.className = "row-del"; del.innerHTML = "&times;"; del.title = "Usuń wiersz";
+      del.addEventListener("click", ()=>{
+        state[key].splice(idx,1);
+        renderTable(key);
+        queueSave();
+      });
+      tdDel.appendChild(del);
+    }
     tr.appendChild(tdDel);
     tbody.appendChild(tr);
   });
@@ -557,6 +600,7 @@ function renderAllTables(){ Object.keys(tableConfigs).forEach(renderTable); }
 
 document.querySelectorAll("[data-add]").forEach(btn=>{
   btn.addEventListener("click", ()=>{
+    if (isReadOnly) return;
     const key = btn.getAttribute("data-add");
     const cfg = tableConfigs[key];
     const blank = {}; cfg.cols.forEach(c=> blank[c]="");
@@ -565,6 +609,13 @@ document.querySelectorAll("[data-add]").forEach(btn=>{
     queueSave();
   });
 });
+
+function setFormEditable(editable){
+  isReadOnly = !editable;
+  bindInputs();
+  renderAllTables();
+  document.querySelectorAll("[data-add]").forEach(btn=>{ btn.style.display = isReadOnly ? "none" : ""; });
+}
 
 function queueSave(){
   const dot = document.getElementById("saveDot");
@@ -709,10 +760,8 @@ if ("serviceWorker" in navigator){
   });
 }
 
-/* ---------------- Firebase sync ---------------- */
+/* ---------------- Firebase sync (multi-user, roles) ---------------- */
 const FB_CONFIG_KEY = "inop-firebase-config";
-const DOC_COLLECTION = "inop";
-const DOC_ID = "document";
 
 const fbConfigInput = document.getElementById("fbConfigInput");
 const fbSaveConfigBtn = document.getElementById("fbSaveConfigBtn");
@@ -725,12 +774,27 @@ const fbGoogleBtn = document.getElementById("fbGoogleBtn");
 const fbLogoutBtn = document.getElementById("fbLogoutBtn");
 const fbStatusEl = document.getElementById("fbStatus");
 
+const accessSection = document.getElementById("sec-access");
+const docSwitcher = document.getElementById("docSwitcher");
+const roleInfo = document.getElementById("roleInfo");
+const accessManageBox = document.getElementById("accessManageBox");
+const collabTbody = document.querySelector("#tbl-collaborators tbody");
+const inviteEmail = document.getElementById("inviteEmail");
+const inviteRole = document.getElementById("inviteRole");
+const inviteBtn = document.getElementById("inviteBtn");
+const pendingBox = document.getElementById("pendingBox");
+const pendingList = document.getElementById("pendingList");
+
 let fbApp = null;
 let fbAuth = null;
 let fbDb = null;
 let fbUser = null;
+let currentDocId = null;   // which document's data is currently loaded
+let currentRole = null;    // "owner" | "administrator" | "editor" | "viewer"
+let availableDocs = [];    // [{id, label, role}]
 
 function setFbStatus(text){ fbStatusEl.textContent = "Status: " + text; }
+const ROLE_LABELS = { owner:"właściciel", administrator:"administrator", editor:"edytor", viewer:"czytelnik" };
 
 function initFirebase(config){
   try{
@@ -746,11 +810,14 @@ function initFirebase(config){
       if (user){
         fbAuthBox.style.display = "none";
         fbLogoutBtn.style.display = "block";
-        setFbStatus("zalogowano jako " + user.email + ". Wczytywanie danych z chmury…");
-        if (justLoggedIn) autoLoadFromCloud();
+        accessSection.style.display = "block";
+        setFbStatus("zalogowano jako " + user.email + ". Przygotowywanie dostępu…");
+        if (justLoggedIn) onLoggedIn();
       } else {
         fbAuthBox.style.display = "block";
         fbLogoutBtn.style.display = "none";
+        accessSection.style.display = "none";
+        currentDocId = null; currentRole = null;
         setFbStatus("wprowadź e-mail i hasło (lub zaloguj przez Google), aby się zalogować.");
       }
     });
@@ -790,9 +857,6 @@ function extractFirebaseConfig(rawText){
   if (marker !== -1) searchFrom = marker;
   const start = text.indexOf("{", searchFrom);
   if (start === -1) throw new Error("Nie znaleziono nawiasu otwierającego { w wklejonym tekście.");
-  // Walk forward counting brace depth, ignoring braces inside string literals,
-  // so we can pull out just the {...} object even from a full code snippet
-  // with imports, comments, "const firebaseConfig = ..." etc.
   let depth = 0, inString = false, quoteChar = "", end = -1;
   for (let i = start; i < text.length; i++){
     const ch = text[i];
@@ -813,9 +877,6 @@ function extractFirebaseConfig(rawText){
   try{
     return JSON.parse(objectText);
   }catch(e){
-    // Not strict JSON (unquoted keys, as Firebase's snippet uses) —
-    // evaluate it as a plain JS object literal instead. This runs entirely
-    // locally in the user's own browser on data they pasted themselves.
     try{
       return new Function('"use strict"; return (' + objectText + ");")();
     }catch(e2){
@@ -854,7 +915,6 @@ fbGoogleBtn.addEventListener("click", async ()=>{
       "auth/operation-not-supported-in-this-environment",
     ];
     if (fallbackCodes.includes(e.code)){
-      // Popups are unreliable on iOS/standalone PWAs — fall back to a full redirect.
       fbAuth.signInWithRedirect(provider);
     } else {
       setFbStatus("błąd logowania Google — " + e.message);
@@ -882,33 +942,260 @@ fbLogoutBtn.addEventListener("click", async ()=>{
   setFbStatus("wylogowano.");
 });
 
-async function pushToCloud(){
-  if (!fbUser || !fbDb) return;
-  await fbDb.collection("users").doc(fbUser.uid)
-    .collection(DOC_COLLECTION).doc(DOC_ID)
-    .set({ data: JSON.stringify(state), updatedAt: firebase.firestore.FieldValue.serverTimestamp() });
+function emailToInviteId(docId, email){
+  return docId + "__" + email.trim().toLowerCase();
 }
 
-async function autoLoadFromCloud(){
+async function onLoggedIn(){
   try{
-    const snap = await fbDb.collection("users").doc(fbUser.uid)
-      .collection(DOC_COLLECTION).doc(DOC_ID).get();
-    if (snap.exists){
-      const incoming = JSON.parse(snap.data().data);
-      state = deepMerge(defaults, incoming);
-      bindInputs();
-      renderAllTables();
-      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
-      setFbStatus("wczytano najnowszą wersję z chmury (" + new Date().toLocaleTimeString("pl-PL") + "). Dalsze zmiany zapisują się automatycznie.");
+    // 1. Keep the email → uid lookup table current (used when an admin
+    //    invites someone who has already logged in at least once).
+    await fbDb.collection("users").doc(fbUser.uid).set({
+      email: (fbUser.email || "").toLowerCase(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    // 2. Make sure this account has its own personal document. This is
+    //    what lets anyone not on any list start using the app immediately.
+    //    If this account already has locally-saved data (e.g. everything
+    //    filled in before cloud sync existed), that becomes the starting
+    //    content instead of a blank template — nothing gets wiped.
+    const ownDocRef = fbDb.collection("documents").doc(fbUser.uid);
+    const ownDocSnap = await ownDocRef.get();
+    if (!ownDocSnap.exists){
+      await ownDocRef.set({
+        ownerId: fbUser.uid,
+        ownerEmail: (fbUser.email || "").toLowerCase(),
+        collaborators: {},
+        data: JSON.stringify(state),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+
+    // 3. Accept any pending invites addressed to this e-mail — this grants
+    //    access automatically the first time an invited person logs in.
+    const myEmail = (fbUser.email || "").toLowerCase();
+    if (myEmail){
+      const inviteSnap = await fbDb.collection("invites")
+        .where("email", "==", myEmail)
+        .where("status", "==", "pending")
+        .get();
+      for (const inviteDoc of inviteSnap.docs){
+        const invite = inviteDoc.data();
+        try{
+          const targetDocRef = fbDb.collection("documents").doc(invite.docId);
+          await targetDocRef.update({
+            ["collaborators." + fbUser.uid]: { role: invite.role, email: myEmail },
+          });
+          await inviteDoc.ref.update({ status: "accepted" });
+        }catch(e){
+          // If this fails (e.g. rules mismatch), leave the invite pending
+          // rather than losing it — it can be retried on next login.
+        }
+      }
+    }
+
+    await refreshAvailableDocs();
+    setFbStatus("zalogowano jako " + fbUser.email + ".");
+  }catch(e){
+    setFbStatus("błąd przygotowania dostępu — " + e.message);
+  }
+}
+
+async function refreshAvailableDocs(){
+  availableDocs = [{ id: fbUser.uid, label: "Mój dokument (właściciel)", role: "owner" }];
+  try{
+    const sharedSnap = await fbDb.collection("documents")
+      .where("collaborators." + fbUser.uid + ".role", "in", ["administrator","editor","viewer"])
+      .get();
+    sharedSnap.forEach((doc) => {
+      if (doc.id === fbUser.uid) return; // shouldn't happen, but guard anyway
+      const d = doc.data();
+      const role = (d.collaborators && d.collaborators[fbUser.uid] && d.collaborators[fbUser.uid].role) || "viewer";
+      availableDocs.push({ id: doc.id, label: (d.ownerEmail || doc.id) + " (" + ROLE_LABELS[role] + ")", role });
+    });
+  }catch(e){
+    // Query may fail if no shared docs / index still building — not fatal.
+  }
+  docSwitcher.innerHTML = "";
+  availableDocs.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d.id; opt.textContent = d.label;
+    docSwitcher.appendChild(opt);
+  });
+  const toLoad = availableDocs.find(d => d.id === currentDocId) ? currentDocId : fbUser.uid;
+  docSwitcher.value = toLoad;
+  await loadDocument(toLoad);
+}
+
+docSwitcher.addEventListener("change", ()=> loadDocument(docSwitcher.value));
+
+async function loadDocument(docId){
+  try{
+    const snap = await fbDb.collection("documents").doc(docId).get();
+    if (!snap.exists){ setFbStatus("nie znaleziono dokumentu."); return; }
+    const d = snap.data();
+    currentDocId = docId;
+    currentRole = (docId === fbUser.uid)
+      ? "owner"
+      : ((d.collaborators && d.collaborators[fbUser.uid] && d.collaborators[fbUser.uid].role) || "viewer");
+
+    const incoming = JSON.parse(d.data || "{}");
+    state = deepMerge(defaults, incoming);
+
+    const canEdit = (currentRole === "owner" || currentRole === "administrator" || currentRole === "editor");
+    setFormEditable(canEdit);
+
+    roleInfo.textContent = "Twoja rola w tym dokumencie: " + ROLE_LABELS[currentRole] +
+      (canEdit ? "." : " — podgląd bez możliwości edycji.");
+
+    const canManage = (currentRole === "owner" || currentRole === "administrator");
+    accessManageBox.style.display = canManage ? "block" : "none";
+    if (canManage) await renderCollaborators(d);
+
+    try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+    setFbStatus("wczytano dokument (" + new Date().toLocaleTimeString("pl-PL") + ").");
+  }catch(e){
+    setFbStatus("błąd wczytywania dokumentu — " + e.message);
+  }
+}
+
+async function renderCollaborators(docData){
+  collabTbody.innerHTML = "";
+  const collaborators = docData.collaborators || {};
+  Object.keys(collaborators).forEach((uid) => {
+    const info = collaborators[uid];
+    const tr = document.createElement("tr");
+
+    const tdEmail = document.createElement("td");
+    tdEmail.textContent = info.email || uid;
+    tr.appendChild(tdEmail);
+
+    const tdRole = document.createElement("td");
+    const sel = document.createElement("select");
+    sel.style.cssText = "width:100%; font-family:var(--font-b); font-size:13.5px; padding:6px 8px; border:1px solid var(--line-strong); border-radius:6px; background:#FCFCFB;";
+    ["viewer","editor","administrator"].forEach((r) => {
+      const opt = document.createElement("option");
+      opt.value = r; opt.textContent = ROLE_LABELS[r];
+      if (r === info.role) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener("change", async ()=>{
+      try{
+        await fbDb.collection("documents").doc(currentDocId).update({
+          ["collaborators." + uid + ".role"]: sel.value,
+        });
+        setFbStatus("zaktualizowano rolę " + (info.email || uid) + ".");
+      }catch(e){
+        setFbStatus("błąd zmiany roli — " + e.message);
+      }
+    });
+    tdRole.appendChild(sel);
+    tr.appendChild(tdRole);
+
+    const tdDel = document.createElement("td");
+    const del = document.createElement("button");
+    del.className = "row-del"; del.innerHTML = "&times;"; del.title = "Usuń dostęp";
+    del.addEventListener("click", async ()=>{
+      if (!confirm("Usunąć dostęp dla " + (info.email || uid) + "?")) return;
+      try{
+        await fbDb.collection("documents").doc(currentDocId).update({
+          ["collaborators." + uid]: firebase.firestore.FieldValue.delete(),
+        });
+        const snap = await fbDb.collection("documents").doc(currentDocId).get();
+        await renderCollaborators(snap.data());
+        setFbStatus("usunięto dostęp dla " + (info.email || uid) + ".");
+      }catch(e){
+        setFbStatus("błąd usuwania dostępu — " + e.message);
+      }
+    });
+    tdDel.appendChild(del);
+    tr.appendChild(tdDel);
+
+    collabTbody.appendChild(tr);
+  });
+
+  // Pending invites for this document.
+  try{
+    const pendingSnap = await fbDb.collection("invites")
+      .where("docId", "==", currentDocId)
+      .where("status", "==", "pending")
+      .get();
+    if (!pendingSnap.empty){
+      pendingBox.style.display = "block";
+      pendingList.innerHTML = "";
+      pendingSnap.forEach((doc) => {
+        const inv = doc.data();
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:5px 0;";
+        row.innerHTML = "<span>" + inv.email + " — " + ROLE_LABELS[inv.role] + " (oczekuje na pierwsze logowanie)</span>";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "row-del"; cancelBtn.innerHTML = "&times;"; cancelBtn.title = "Anuluj zaproszenie";
+        cancelBtn.addEventListener("click", async ()=>{
+          try{
+            await doc.ref.delete();
+            row.remove();
+          }catch(e){
+            setFbStatus("błąd anulowania zaproszenia — " + e.message);
+          }
+        });
+        row.appendChild(cancelBtn);
+        pendingList.appendChild(row);
+      });
     } else {
-      // No cloud copy yet on this account — push what's on this device up
-      // as the starting version.
-      await pushToCloud();
-      setFbStatus("brak wcześniejszych danych w chmurze — zapisano bieżącą wersję jako pierwszą. Dalsze zmiany zapisują się automatycznie.");
+      pendingBox.style.display = "none";
     }
   }catch(e){
-    setFbStatus("błąd wczytywania z chmury — " + e.message);
+    pendingBox.style.display = "none";
   }
+}
+
+inviteBtn.addEventListener("click", async ()=>{
+  const email = inviteEmail.value.trim().toLowerCase();
+  const role = inviteRole.value;
+  if (!email || !email.includes("@")){ alert("Podaj poprawny adres e-mail."); return; }
+  if (!currentDocId){ alert("Najpierw wczytaj dokument."); return; }
+  setFbStatus("dodawanie osoby…");
+  try{
+    // Case 1: this person has already logged into the app before —
+    // we can resolve their uid immediately and grant access now.
+    const userSnap = await fbDb.collection("users").where("email", "==", email).limit(1).get();
+    if (!userSnap.empty){
+      const uid = userSnap.docs[0].id;
+      await fbDb.collection("documents").doc(currentDocId).update({
+        ["collaborators." + uid]: { role, email },
+      });
+      setFbStatus("dodano " + email + " jako " + ROLE_LABELS[role] + ".");
+    } else {
+      // Case 2: never logged in yet — store a pending invite; access is
+      // granted automatically the moment they log in for the first time.
+      const inviteId = emailToInviteId(currentDocId, email);
+      await fbDb.collection("invites").doc(inviteId).set({
+        docId: currentDocId,
+        email,
+        role,
+        invitedBy: fbUser.uid,
+        invitedByEmail: (fbUser.email || "").toLowerCase(),
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        status: "pending",
+      });
+      setFbStatus(email + " nie logował/a się jeszcze do aplikacji — dostęp zostanie przyznany automatycznie przy pierwszym logowaniu.");
+    }
+    inviteEmail.value = "";
+    const snap = await fbDb.collection("documents").doc(currentDocId).get();
+    await renderCollaborators(snap.data());
+  }catch(e){
+    setFbStatus("błąd dodawania osoby — " + e.message);
+  }
+});
+
+async function pushToCloud(){
+  if (!fbUser || !fbDb || !currentDocId) return;
+  if (currentRole !== "owner" && currentRole !== "administrator" && currentRole !== "editor") return;
+  await fbDb.collection("documents").doc(currentDocId).update({
+    data: JSON.stringify(state),
+    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+  });
 }
 
 const tocLinks = document.querySelectorAll("nav.toc a");
